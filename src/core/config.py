@@ -4,9 +4,13 @@ Lab 11 — Configuration, provider selection, API keys.
 Hai tầng model (không trộn):
 
   Blue Team (CP2–CP3, guardrails / pipeline / protected agent)
-    → CỐ ĐỊNH OpenRouter ``liquid/lfm-3-1.7b:free``
-       https://openrouter.ai/liquid/lfm-3-1.7b:free
-    → Cần ``OPENROUTER_API_KEY``
+    → CỐ ĐỊNH model Liquid LFM3 1.7B, gọi qua MỘT trong hai cổng:
+       • OpenRouter (mặc định): ``liquid/lfm-3-1.7b:free`` — cần ``OPENROUTER_API_KEY``
+         https://openrouter.ai/liquid/lfm-3-1.7b:free
+       • Liquid API trực tiếp: ``lfm3-1.7b`` — cần ``LIQUID_API_KEY`` (dạng ``liquid_...``)
+         https://console.liquid.ai/dashboard/api-keys
+    → Chọn cổng: ``BLUE_PROVIDER=openrouter|liquid`` (bỏ trống → tự chọn liquid
+      nếu chỉ có ``LIQUID_API_KEY``)
 
   Red Team (CP4)
     → Chọn một provider: OpenAI hoặc Gemini
@@ -33,12 +37,15 @@ except ImportError:
 PROVIDER_OPENAI = "openai"
 PROVIDER_GEMINI = "gemini"
 PROVIDER_OPENROUTER = "openrouter"
+PROVIDER_LIQUID = "liquid"
 
-# --- Blue Team (LOCKED) ---
-BLUE_PROVIDER = PROVIDER_OPENROUTER
-BLUE_MODEL = "liquid/lfm-3-1.7b:free"
+# --- Blue Team (LOCKED model: Liquid LFM3 1.7B) ---
+BLUE_PROVIDER = PROVIDER_OPENROUTER  # mặc định; đổi qua env BLUE_PROVIDER
+BLUE_MODEL = "liquid/lfm-3-1.7b:free"  # tên model trên OpenRouter
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_OPENROUTER_MODEL = BLUE_MODEL  # alias
+LIQUID_BLUE_MODEL = "lfm3-1.7b"  # cùng model, tên trên Liquid API
+LIQUID_BASE_URL = "https://api.liquid.ai/openai/v1"
 
 # --- Red Team ---
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
@@ -96,24 +103,45 @@ except FileNotFoundError:
 
 
 # ---------------------------------------------------------------------------
-# Blue Team — fixed OpenRouter Liquid
+# Blue Team — fixed Liquid LFM3 1.7B (via OpenRouter or Liquid API)
 # ---------------------------------------------------------------------------
-
-def get_blue_provider() -> str:
-    return BLUE_PROVIDER
-
-
-def get_blue_model() -> str:
-    # Hard-locked; env cannot override for the graded Blue Team path.
-    return BLUE_MODEL
-
 
 def get_openrouter_api_key() -> str:
     return os.environ.get("OPENROUTER_API_KEY", "").strip()
 
 
+def get_liquid_api_key() -> str:
+    return os.environ.get("LIQUID_API_KEY", "").strip()
+
+
+def get_blue_provider() -> str:
+    raw = os.environ.get("BLUE_PROVIDER", "").strip().lower()
+    if raw in {PROVIDER_LIQUID, "liquid_ai", "liquidai"}:
+        return PROVIDER_LIQUID
+    if raw == PROVIDER_OPENROUTER:
+        return PROVIDER_OPENROUTER
+    if get_liquid_api_key() and not get_openrouter_api_key():
+        return PROVIDER_LIQUID
+    return BLUE_PROVIDER
+
+
+def get_blue_model() -> str:
+    # Model hard-locked (LFM3 1.7B); env chỉ chọn cổng, không đổi model.
+    if get_blue_provider() == PROVIDER_LIQUID:
+        return LIQUID_BLUE_MODEL
+    return BLUE_MODEL
+
+
 def blue_client_kwargs() -> dict:
-    """OpenAI SDK kwargs pointing at OpenRouter (Blue Team only)."""
+    """OpenAI SDK kwargs cho Blue Team (OpenRouter hoặc Liquid API)."""
+    if get_blue_provider() == PROVIDER_LIQUID:
+        return {
+            "api_key": get_liquid_api_key() or None,
+            "base_url": (
+                os.environ.get("LIQUID_BASE_URL", LIQUID_BASE_URL).strip()
+                or LIQUID_BASE_URL
+            ),
+        }
     return {
         "api_key": get_openrouter_api_key() or None,
         "base_url": (
@@ -235,8 +263,13 @@ def is_harder_model() -> bool:
 
 
 def setup_api_key():
-    """Ensure keys for Blue (OpenRouter) + Red / Red Advance (OpenAI or Gemini)."""
-    if not get_openrouter_api_key():
+    """Ensure keys for Blue (OpenRouter/Liquid) + Red / Red Advance (OpenAI or Gemini)."""
+    if get_blue_provider() == PROVIDER_LIQUID:
+        if not get_liquid_api_key():
+            os.environ["LIQUID_API_KEY"] = input(
+                "Enter Liquid API Key (Blue): "
+            ).strip()
+    elif not get_openrouter_api_key():
         os.environ["OPENROUTER_API_KEY"] = input(
             "Enter OpenRouter API Key (Blue): "
         ).strip()
