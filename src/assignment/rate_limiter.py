@@ -37,13 +37,27 @@ class RateLimitPlugin(base_plugin.BasePlugin):
         now = time.time()
         window = self.user_windows[user_id]
 
-        # TODO: Implement sliding window:
-        # 1. Pop timestamps older than (now - window_seconds) from the left
-        # 2. If len(window) >= max_requests:
-        #       wait = window_seconds - (now - window[0])
-        #       self.blocked_count += 1
-        #       return self._block_response(
-        #           f"Rate limit exceeded. Try again in {wait:.0f}s."
-        #       )
-        # 3. Else: append now, return None
-        raise NotImplementedError("Implement RateLimitPlugin.on_user_message_callback")
+        # 1. Bỏ các mốc thời gian đã ra khỏi cửa sổ (cũ hơn now - window_seconds).
+        #    deque giữ thứ tự thời gian → phần tử cũ nhất luôn ở bên trái.
+        while window and window[0] <= now - self.window_seconds:
+            window.popleft()
+
+        # 2. Đã đủ max_requests trong cửa sổ → chặn, KHÔNG ghi mốc mới
+        #    (request bị chặn không được tính, nếu không user spam sẽ bị khoá mãi).
+        if len(window) >= self.max_requests:
+            wait = self.window_seconds - (now - window[0])
+            self.blocked_count += 1
+            return self._block_response(
+                f"Rate limit exceeded. Try again in {wait:.0f}s."
+            )
+
+        # 3. Còn hạn mức → ghi mốc thời gian, cho qua.
+        window.append(now)
+        return None
+
+    def reset(self, user_id: str | None = None) -> None:
+        """Xoá cửa sổ của một user (hoặc tất cả) — dùng khi bắt đầu phiên test mới."""
+        if user_id is None:
+            self.user_windows.clear()
+        else:
+            self.user_windows.pop(user_id, None)
